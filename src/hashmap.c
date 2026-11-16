@@ -44,7 +44,7 @@ static size_t hm_get_bucket(size_t hash_of_key, size_t bucket_count)
 // Othervise old array will continue to be used.
 static bool hm_resize(Hashmap *hm)
 {
-    // TODO: add guard against overflow
+    if (hm->buckets_count > SIZE_MAX / 2) return false;
     size_t new_buckets_count = hm->buckets_count * 2;
 
     Node **p = calloc(new_buckets_count, sizeof(Node *));
