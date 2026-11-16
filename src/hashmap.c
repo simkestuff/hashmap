@@ -145,10 +145,7 @@ int *hm_put(Hashmap *hm, const char *key, int value)
 	return ip;
     }
 
-    if (hm->count * 4 >= hm->buckets_count * 3) {
-	bool res = hm_resize(hm);
-	if (res) puts("Resize successfull\n");
-    }
+    if (hm->count * 4 >= hm->buckets_count * 3) hm_resize(hm);
 
     // Node allocation
     Node *n = malloc(sizeof(Node));
