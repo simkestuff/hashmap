@@ -38,6 +38,35 @@ static size_t hm_get_bucket(size_t hash_of_key, size_t bucket_count)
     return hash_of_key % bucket_count;
 }
 
+// helper - resize array (doubling it) holding Node*;
+// all Node hashes are recalculated and Nodes are relinked to new array
+// return true if operation is successfull and discard old array.
+// Othervise old array will continue to be used.
+static bool hm_resize(Hashmap *hm)
+{
+    // TODO: add guard against overflow
+    size_t new_buckets_count = hm->buckets_count * 2;
+
+    Node **p = calloc(new_buckets_count, sizeof(Node *));
+    if (p == NULL) return false;
+
+    for (size_t bi = 0; bi < hm->buckets_count; bi++) {
+	Node *nodep = hm->buckets[bi];
+	Node *tmp = NULL;
+	while (nodep != NULL) {
+	    tmp = nodep->next;
+	    size_t new_bucket = hm_get_bucket((hm->hash)(nodep->key), new_buckets_count);
+	    if (p[new_bucket] != NULL) 	nodep->next = p[new_bucket];
+	    p[new_bucket] = nodep;
+	    nodep = tmp;
+	}
+    }
+
+    free(hm->buckets);
+    hm->buckets = p;
+    return true;
+}
+
 Hashmap *hm_create(size_t buckets_count, HashFn hash)
 {
     if (buckets_count == 0) {
@@ -115,6 +144,8 @@ int *hm_put(Hashmap *hm, const char *key, int value)
 	*ip = value;
 	return ip;
     }
+
+    if (hm->count * 4 >= hm->buckets_count * 3) hm_resize(hm);
 
     // Node allocation
     Node *n = malloc(sizeof(Node));
