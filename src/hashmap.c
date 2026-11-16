@@ -47,23 +47,23 @@ static bool hm_resize(Hashmap *hm)
     if (hm->buckets_count > SIZE_MAX / 2) return false;
     size_t new_buckets_count = hm->buckets_count * 2;
 
-    Node **p = calloc(new_buckets_count, sizeof(Node *));
-    if (p == NULL) return false;
+    Node **new_buckets = calloc(new_buckets_count, sizeof(Node *));
+    if (new_buckets == NULL) return false;
 
     for (size_t bi = 0; bi < hm->buckets_count; bi++) {
 	Node *nodep = hm->buckets[bi];
-	Node *tmp = NULL;
 	while (nodep != NULL) {
-	    tmp = nodep->next;
+	    Node *next = nodep->next;
 	    size_t new_bucket = hm_get_bucket((hm->hash)(nodep->key), new_buckets_count);
-	    if (p[new_bucket] != NULL) 	nodep->next = p[new_bucket];
-	    p[new_bucket] = nodep;
-	    nodep = tmp;
+	    nodep->next = new_buckets[new_bucket];
+	    new_buckets[new_bucket] = nodep;
+	    nodep = next;
 	}
     }
 
     free(hm->buckets);
-    hm->buckets = p;
+    hm->buckets = new_buckets;
+    hm->buckets_count = new_buckets_count;
     return true;
 }
 
@@ -145,7 +145,10 @@ int *hm_put(Hashmap *hm, const char *key, int value)
 	return ip;
     }
 
-    if (hm->count * 4 >= hm->buckets_count * 3) hm_resize(hm);
+    if (hm->count * 4 >= hm->buckets_count * 3) {
+	bool res = hm_resize(hm);
+	if (res) puts("Resize successfull\n");
+    }
 
     // Node allocation
     Node *n = malloc(sizeof(Node));
