@@ -57,7 +57,7 @@ Hashmap *hm_create(size_t buckets_count, HashFn hash)
     if (hash == NULL) hmp->hash = &hash_djb2;
     else hmp->hash = hash;
     
-    hmp->buckets = calloc(hmp->buckets_count, sizeof(void *));
+    hmp->buckets = calloc(hmp->buckets_count, sizeof(Node *));
     if (hmp->buckets == NULL) {
 	fprintf(stderr, "Can't allocate memory for Hashmap array. \n");
 	free(hmp);
