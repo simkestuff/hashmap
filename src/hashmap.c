@@ -69,16 +69,10 @@ static bool hm_resize(Hashmap *hm)
 
 Hashmap *hm_create(size_t buckets_count, HashFn hash)
 {
-    if (buckets_count == 0) {
-	fprintf(stderr, "Invalid value for bucket count. \n");
-	return NULL;
-    }
+    if (buckets_count == 0) return NULL;
     
     Hashmap *hmp = malloc(sizeof(Hashmap));
-    if (hmp == NULL) {
-	fprintf(stderr, "Can't allocate memory for Hashmap. \n");
-	return hmp;
-    }
+    if (hmp == NULL) return hmp;
     
     hmp->buckets_count = buckets_count;
     hmp->count = 0;
@@ -88,7 +82,6 @@ Hashmap *hm_create(size_t buckets_count, HashFn hash)
     
     hmp->buckets = calloc(hmp->buckets_count, sizeof(Node *));
     if (hmp->buckets == NULL) {
-	fprintf(stderr, "Can't allocate memory for Hashmap array. \n");
 	free(hmp);
 	return NULL;
     }
@@ -149,14 +142,11 @@ int *hm_put(Hashmap *hm, const char *key, int value)
 
     // Node allocation
     Node *n = malloc(sizeof(Node));
-    if (n == NULL) {
-	fprintf(stderr, "Can't allocate Node\n");
-	return NULL;
-    }
+    if (n == NULL) return NULL;
+    
     // key allocation and copying
     char *s = malloc(strlen(key) + 1);
     if (s == NULL) {
-	fprintf(stderr, "Can't allocate key %s\n", key);
 	free(n);
 	return NULL;
     }
