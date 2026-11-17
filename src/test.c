@@ -13,41 +13,42 @@ static void key_for(int i, char *buf, size_t size)
 
 static void stress_test(size_t buckets)
 {
-    Hashmap *m = hm_create(buckets, NULL);
+    Hashmap *m = hm_create(sizeof(int), buckets, NULL);
     assert(m != NULL);
     char key[32];                      // one reused buffer: also tests key copying
 
     for (int i = 0; i < N; i++) {
         key_for(i, key, sizeof key);
-        int *p = hm_put(m, key, i);
+        int *p = hm_put(m, key, strlen(key), &i);
         assert(p != NULL);
     }
     assert(hm_count(m) == N);
 
     for (int i = 0; i < N; i++) {      // everything findable, with its own value
         key_for(i, key, sizeof key);
-        int *v = hm_get(m, key);
+        int *v = hm_get(m, key, strlen(key));
         assert(v != NULL && *v == i);
     }
-    assert(hm_get(m, "never inserted") == NULL);
+    assert(hm_get(m, "never inserted", strlen("never inserted")) == NULL);
 
     for (int i = 0; i < N; i += 2) {   // delete the even ones
         key_for(i, key, sizeof key);
-        assert(hm_delete(m, key) == true);
-        assert(hm_delete(m, key) == false);   // second delete: already gone
+        assert(hm_delete(m, key, strlen(key)) == true);
+        assert(hm_delete(m, key, strlen(key)) == false);   // second delete: already gone
     }
     assert(hm_count(m) == N / 2);
 
     for (int i = 0; i < N; i++) {      // evens gone, odds untouched
         key_for(i, key, sizeof key);
-        int *v = hm_get(m, key);
+        int *v = hm_get(m, key, strlen(key));
         if (i % 2 == 0) assert(v == NULL);
         else assert(v != NULL && *v == i);
     }
 
     for (int i = 0; i < N; i += 2) {   // re-insert the evens with new values
         key_for(i, key, sizeof key);
-        int *p = hm_put(m, key, -i);
+	int j = -i;
+        int *p = hm_put(m, key, strlen(key), &j);
         assert(p != NULL);
     }
     assert(hm_count(m) == N);
@@ -59,7 +60,7 @@ static void stress_test(size_t buckets)
 
 static void random_test(size_t buckets, unsigned seed, int steps)
 {
-    Hashmap *m = hm_create(buckets, NULL);
+    Hashmap *m = hm_create(sizeof(int),buckets, NULL);
     assert(m != NULL);
 
     int expected[K] = {0};         // what the map should hold for each key id
@@ -75,7 +76,7 @@ static void random_test(size_t buckets, unsigned seed, int steps)
         switch (rand() % 3) {
         case 0: {                  // put
             int value = rand();
-            int *p = hm_put(m, key, value);
+            int *p = hm_put(m, key, strlen(key), &value);
             assert(p != NULL);
             if (!present[id]) live++;
             present[id] = true;
@@ -83,13 +84,13 @@ static void random_test(size_t buckets, unsigned seed, int steps)
             break;
         }
         case 1: {                  // get
-            int *v = hm_get(m, key);
+            int *v = hm_get(m, key, strlen(key));
             if (present[id]) assert(v != NULL && *v == expected[id]);
             else assert(v == NULL);
             break;
         }
         default: {                 // delete
-            bool existed = hm_delete(m, key);
+            bool existed = hm_delete(m, key, strlen(key));
             assert(existed == present[id]);
             if (present[id]) live--;
             present[id] = false;
@@ -110,5 +111,15 @@ int main(void)
         random_test(sizes[i], 12345, 100000);
     }
     puts("all tests passed");
+    
+    Hashmap *hm = hm_create(sizeof(int), 3, NULL);
+    
+    int i = 42;
+    // zero length key
+    hm_put(hm, "", 0, &i);
+    assert((*(int*)hm_get(hm, "", 0)) == i);
+
+    hm_destroy(hm);
+    
     return 0;
 }

@@ -7,26 +7,28 @@
 
 
 typedef struct Node {
-    int value;
-    char *key;
+    void *value;
+    void *key;
+    size_t key_len;
     struct Node *next;
 } Node;
 
 struct Hashmap {
     Node **buckets;
+    size_t value_size;
     size_t buckets_count;  // index = hash(key) % buckets_count
-    size_t (*hash) (const char *key);
+    HmHashFn hash;
     size_t count;
 };
 
 // default hash function when hm_create argument 'hash' is NULL
-static size_t hash_djb2(const char *s)
+static size_t hash_djb2(const void *key, size_t key_len)
 {
+    const uint8_t *bytes = key;
     size_t hash = 5381;
-    int c;
 
-    while ((c = *s++)) {
-	hash = (hash << 5) + hash + c;
+    for (size_t i = 0; i < key_len; i++) {
+	hash = (hash << 5) + hash + bytes[i];
     }
 
     return hash;
@@ -54,7 +56,7 @@ static bool hm_resize(Hashmap *hm)
 	Node *nodep = hm->buckets[bi];
 	while (nodep != NULL) {
 	    Node *next = nodep->next;
-	    size_t new_bucket = hm_get_bucket((hm->hash)(nodep->key), new_buckets_count);
+	    size_t new_bucket = hm_get_bucket((hm->hash)(nodep->key, nodep->key_len), new_buckets_count);
 	    nodep->next = new_buckets[new_bucket];
 	    new_buckets[new_bucket] = nodep;
 	    nodep = next;
@@ -67,13 +69,14 @@ static bool hm_resize(Hashmap *hm)
     return true;
 }
 
-Hashmap *hm_create(size_t buckets_count, HashFn hash)
+Hashmap *hm_create(size_t value_size, size_t buckets_count, HmHashFn hash)
 {
-    if (buckets_count == 0) return NULL;
+    if (value_size == 0 || buckets_count == 0) return NULL;
     
     Hashmap *hmp = malloc(sizeof(Hashmap));
     if (hmp == NULL) return hmp;
     
+    hmp->value_size = value_size;
     hmp->buckets_count = buckets_count;
     hmp->count = 0;
     
@@ -96,6 +99,7 @@ void hm_destroy(Hashmap *hm)
 	    Node *p = hm->buckets[i];
 	    while (p != NULL) {
 		free(p->key);
+		free(p->value);
 		Node *tmp = p;
 		p = p->next;
 		free(tmp);
@@ -107,20 +111,20 @@ void hm_destroy(Hashmap *hm)
     }
 }
 
-size_t hm_count(Hashmap *hm)
+size_t hm_count(const Hashmap *hm)
 {
     if (hm == NULL) return 0;
     return hm->count;
 }
 
-int *hm_get(Hashmap *hm, const char *key)
+void *hm_get(const Hashmap *hm, const void *key, size_t key_len)
 {
     if (hm == NULL) return NULL;
     
-    size_t bucket = hm_get_bucket(hm->hash(key), hm->buckets_count);
+    size_t bucket = hm_get_bucket(hm->hash(key, key_len), hm->buckets_count);
     Node *p = hm->buckets[bucket];
     while (p != NULL) {
-	if (strcmp(p->key, key) == 0) return &(p->value);
+	if (p->key_len == key_len && memcmp(p->key, key, key_len) == 0) return p->value;
 	p = p->next;
     }
     
@@ -128,16 +132,19 @@ int *hm_get(Hashmap *hm, const char *key)
 }
 
 
-int *hm_put(Hashmap *hm, const char *key, int value)
+void *hm_put(Hashmap *hm, const void *key, size_t key_len, const void *value)
 {
     if (hm == NULL) return NULL;
 
-    int *ip = hm_get(hm, key);
-    if (ip != NULL) {
-	*ip = value;
-	return ip;
+    void *vp = hm_get(hm, key, key_len);
+    if (vp != NULL) {
+	memmove(vp, value, hm->value_size);
+	return vp;
     }
 
+    // resize if load factor is bigger than O.75;
+    // in resize fail, everything still works on old array
+    // but it will be slower due to bigger and bigger chain.
     if (hm->count * 4 >= hm->buckets_count * 3) hm_resize(hm);
 
     // Node allocation
@@ -145,39 +152,51 @@ int *hm_put(Hashmap *hm, const char *key, int value)
     if (n == NULL) return NULL;
     
     // key allocation and copying
-    char *s = malloc(strlen(key) + 1);
+    // zero len key is valid but malloc can fail
+    size_t len = key_len > 0 ? key_len : 1; 
+    char *s = malloc(len);
     if (s == NULL) {
 	free(n);
 	return NULL;
     }
-    strcpy(s, key);
-
-    size_t bucket = hm_get_bucket(hm->hash(key), hm->buckets_count);
-    Node *p = hm->buckets[bucket];
-
+    memcpy(s, key, key_len);
     n->key = s;
-    n->value = value;
-    if (p == NULL) n->next = NULL;
-    else n->next = p;
+    n->key_len = key_len;
+    
+    // value allocation and copying
+    char *v = malloc(hm->value_size);
+    if (v == NULL) {
+	free(s);
+	free(n);
+	return NULL;
+    }
+    memcpy(v, value, hm->value_size);
+    n->value = v;
+    
+    size_t bucket = hm_get_bucket(hm->hash(key, key_len), hm->buckets_count);
+    Node *p = hm->buckets[bucket];
+    
+    n->next = p;
     hm->buckets[bucket] = n;
 
     hm->count++;
     
-    return &(n->value);
+    return n->value;
 }
 
-bool hm_delete(Hashmap *hm, const char *key)
+bool hm_delete(Hashmap *hm, const void *key, size_t key_len)
 {
     if (hm == NULL) return false;
 	
-    size_t bucket = hm_get_bucket(hm->hash(key), hm->buckets_count);
+    size_t bucket = hm_get_bucket(hm->hash(key, key_len), hm->buckets_count);
     Node *p = hm->buckets[bucket];
     Node *prev = NULL;
     while (p != NULL) {
-	if (strcmp(p->key, key) == 0) {
+	if (p->key_len == key_len && memcmp(p->key, key, key_len) == 0) {
 	    if (prev == NULL) hm->buckets[bucket] = p->next;
 	    else prev->next = p->next;
 	    free(p->key);
+	    free(p->value);
 	    free(p);
 	    hm->count--;
 	    return true;
