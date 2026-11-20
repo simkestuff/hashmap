@@ -66,4 +66,73 @@ static inline bool hm_delete_str(Hashmap *hm, const char *key)
     return hm_delete(hm, key, strlen(key));
 }
 
+// ---------------------------------------------------------------------------
+// Iterator: visit every entry of a map once.
+//
+//     HashmapIter it;
+//     hm_iter_init(&it, map);
+//     while (hm_iter_next(&it)) {
+//         const char *key = hm_iter_key(&it);
+//         size_t len = hm_iter_key_len(&it);
+//         int *value = hm_iter_value(&it);
+//         printf("%.*s -> %d\n", (int)len, key, *value);
+//     }
+//
+// The iterator lives on the stack: nothing is allocated, so there is nothing
+// to free and nothing that can fail. It is only valid while its map exists.
+//
+// Order: every entry is visited exactly once, in an unspecified order that
+// is NOT insertion order and can change after the map grows.
+//
+// Changing the map while iterating:
+//   OK      reading values, and writing through hm_iter_value()
+//   OK      hm_put() on a key that already exists (only its value changes)
+//   OK      hm_delete() of the entry the iterator just returned
+//   NOT OK  hm_put() of a new key (the map may grow and rearrange itself)
+//   NOT OK  hm_delete() of any other entry
+//   NOT OK  hm_destroy() while the iterator is still going to be used
+// After a "NOT OK" change, entries can be skipped or visited twice, or the
+// iterator can read freed memory. Start a new iterator instead.
+// ---------------------------------------------------------------------------
+
+// Iterator state. The fields are private: use only the hm_iter_* functions.
+typedef struct {
+    const Hashmap *hm;   // the map being walked (may be NULL for an empty walk)
+    void *current;       // entry returned by the last hm_iter_next(); NULL
+                         //   before the first call and after the end
+    void *following;     // entry the next hm_iter_next() will return, found
+                         //   in advance so `current` can be deleted safely
+    size_t next_bucket;  // where to continue searching once the chain that
+                         //   `following` belongs to is finished
+} HashmapIter;
+
+// Prepare `iter` to walk `hm`. The iterator starts BEFORE the first entry:
+// call hm_iter_next() to get it. `iter` must not be NULL.
+// `hm` may be NULL or empty. The walk is then finished from the start, and
+// hm_iter_next() returns false right away.
+void hm_iter_init(HashmapIter *iter, const Hashmap *hm);
+
+// Move to the next entry. Returns true if there is one (it is then the
+// current entry, readable with the functions below), false when all entries
+// have been visited. After it has returned false, it keeps returning false.
+// Returns false if `iter` is NULL.
+bool hm_iter_next(HashmapIter *iter);
+
+// Key of the current entry. The bytes are NOT NUL-terminated: use
+// hm_iter_key_len() for their number. Read only: changing the key would break
+// lookups. Returns NULL if there is no current entry (before the first
+// hm_iter_next() call, or after the end).
+const void *hm_iter_key(const HashmapIter *it);
+
+// Length in bytes of the current key (the same length that was passed to
+// hm_put()). Returns 0 if there is no current entry.
+size_t hm_iter_key_len(const HashmapIter *it);
+
+// Pointer to the value of the current entry, the same pointer hm_get() would
+// return for this key. Writing through it changes the stored value. Returns
+// NULL if there is no current entry.
+// The key and value pointers stay valid until the entry is deleted or the
+// map is destroyed.
+void *hm_iter_value(const HashmapIter *it);
+
 #endif

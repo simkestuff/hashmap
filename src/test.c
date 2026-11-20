@@ -580,6 +580,7 @@ static void random_test(size_t buckets, HmHashFn hash)
 
 int main(void)
 {
+
     RUN(test_create_invalid_arguments);
     RUN(test_empty_map);
     RUN(test_put_get_overwrite);
@@ -599,5 +600,27 @@ int main(void)
     RUN_CONFIGS(random_test);
 
     puts("all tests passed");
+
+    Hashmap *hm = hm_create(sizeof(int), 3, NULL);
+    // for (int i = 0; i < 27; i++) {
+    // 	int k = i;
+    // 	int value = i * i;
+    // 	hm_put(hm, &k, sizeof(int), &value);
+    // }
+    int k = 11;
+    int v = 21;
+    hm_put(hm, &k, sizeof(int), &v);
+    // k = 22;
+    // v = 42;
+    // hm_put(hm, &k, sizeof(int), &v);
+
+    HashmapIter iter;
+    hm_iter_init(&iter, hm);
+
+    while (hm_iter_next(&iter)) {
+	printf("key %d, value %d\n", *(int *)(hm_iter_key(&iter)), *(int *)(hm_iter_value(&iter)));
+    }
+
+    hm_destroy(hm);
     return 0;
 }

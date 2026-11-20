@@ -207,3 +207,70 @@ bool hm_delete(Hashmap *hm, const void *key, size_t key_len)
 
     return false;
 }
+
+
+// Iterator
+
+void hm_iter_init(HashmapIter *iter, const Hashmap *hm)
+{
+    iter->hm = hm;
+    iter->current = NULL;
+    
+    if (hm == NULL || hm->count == 0) {
+	// this is only thing that makes sense to me
+	iter->following = NULL;
+	iter->next_bucket = 0;
+	return;
+    }
+    
+    size_t bucket = 0;  // first occupied bucket
+    while (hm->buckets[bucket] == NULL) bucket++;
+    
+    iter->following = hm->buckets[bucket];
+
+    size_t next_bucket = bucket + 1;
+    while (next_bucket < iter->hm->buckets_count && iter->hm->buckets[next_bucket] == NULL)
+	next_bucket++;
+    iter->next_bucket = next_bucket;
+}
+
+bool hm_iter_next(HashmapIter *iter)
+{
+    if (iter == NULL) return false;
+
+    iter->current = iter->following;
+    if (iter->current == NULL) return false;
+
+    Node *np = ((Node *)iter->current)->next;
+    if (np != NULL) {
+	iter->following = np;
+	return true;
+    }
+
+    if (iter->next_bucket == iter->hm->buckets_count) iter->following = NULL;
+    else iter->following = iter->hm->buckets[iter->next_bucket];
+    size_t next_bucket = iter->next_bucket + 1;
+    while (next_bucket < iter->hm->buckets_count && iter->hm->buckets[next_bucket] == NULL)
+	next_bucket++;
+    iter->next_bucket = next_bucket;
+    
+    return true;
+}
+
+const void *hm_iter_key(const HashmapIter *it)
+{
+    if (it == NULL || it->current == NULL) return NULL;
+    return ((Node *)it->current)->key;
+}
+
+size_t hm_iter_key_len(const HashmapIter *it)
+{
+    if (it == NULL || it->current == NULL) return 0;
+    return ((Node *)it->current)->key_len;
+}
+
+void  *hm_iter_value(const HashmapIter *it)
+{
+    if (it == NULL || it->current == NULL) return NULL;
+    return ((Node *)it->current)->value;
+}
