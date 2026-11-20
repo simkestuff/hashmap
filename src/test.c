@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define HM_IMPLEMENTATION
 #include "hashmap.h"
 
 

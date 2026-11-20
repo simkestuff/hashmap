@@ -1,17 +1,17 @@
-# skhashmap: a small hash map library in C
+# skhashmap: a single-header hash map for C
 
-A hash map for C projects: keys are arbitrary byte sequences, values are
-fixed-size blocks of bytes, and everything is copied into the map. It uses
-separate chaining, grows itself, and is built as a learning project, so the
-code is short and meant to be read.
+A hash map for C projects, in **one header file**. Keys are arbitrary byte
+sequences, values are fixed-size blocks of bytes, and everything is copied into
+the map. It uses separate chaining, grows itself, and has an iterator. It is a
+learning project, so the code is short and meant to be read.
 
 This README is also a reminder to future me: how it is built, how to use it,
-and what it can't do.
+and what it can't do. 
+AI wrote this README.
 
 ## Contents
 
 - [Project layout](#project-layout)
-- [Building](#building)
 - [Using the library](#using-the-library)
 - [API reference](#api-reference)
 - [How it works](#how-it-works)
@@ -24,62 +24,59 @@ and what it can't do.
 
 ```
 .
-├── Makefile
 └── src/
-    ├── hashmap.h     # public API (the only header a user needs)
-    ├── hashmap.c     # the whole implementation
+    ├── hashmap.h     # the whole library: declarations and implementation
     └── test.c        # tests, with its own main(); not part of the library
 ```
 
-`make` creates a `build/` folder (debug objects and the test binary) and
-`build/release/` (the library files). Both can be deleted with `make clean`.
+The library is the single file `hashmap.h`. It depends only on the C standard
+library and never prints anything. To use it in another project, copy that one
+file (or add this repository as a git submodule and point `-I` at `src/`).
 
-The library is just `hashmap.h` and `hashmap.c`. They depend only on the C
-standard library and don't print anything.
-
-## Building
-
-Needs `gcc` and `make`. The debug build also needs the sanitizer runtime
-(`libasan` and `libubsan`, which come with a normal GCC install on most
-Linux distributions). Built and tested with GCC 13 on Linux.
-
-| Command | Result |
-|---|---|
-| `make` | debug build of the library and the tests: `build/test` |
-| `make static` | static library `build/release/libskhashmap.a` |
-| `make shared` | shared library `build/release/libskhashmap.so` |
-| `make obj` | only compile the debug objects |
-| `make clean` | delete the `build/` folder |
-
-Two sets of flags are used:
-
-- **Debug** (`make`): `-Wall -Wextra -ggdb -fsanitize=address,undefined`. Use
-  this while developing. AddressSanitizer finds out-of-bounds access and
-  use-after-free, and also reports leaks when the program exits.
-- **Release** (`make static`, `make shared`): `-Wall -Wextra -O2 -fPIC`. No
-  sanitizers, so it is fast, and `-fPIC` makes the objects usable in a shared
-  library. Use this build for timing and for linking into other projects.
-
-Header changes are tracked (`-MMD -MP` makes the compiler write `.d`
-dependency files), so editing `hashmap.h` rebuilds everything that includes it.
-
-Run the tests with:
-
-```
-make && ./build/test
-```
+Written for C99 or later (`static inline`, `bool`). Built and tested with
+GCC 13 on Linux, with `-std=c11 -Wall -Wextra -pedantic`.
 
 ## Using the library
 
-The map stores **bytes**. A key is a pointer and a length. A value is
-always exactly `value_size` bytes, a size you choose once, when you create the
-map. Both are copied in, so the caller's variables can change or go out of
-scope afterwards.
+### The one rule: where the implementation goes
+
+`hashmap.h` is both the header and the implementation. The function bodies are
+only compiled where you ask for them:
+
+- In **exactly one** `.c` file, define `HM_IMPLEMENTATION` before including the
+  header. That file then contains the code of every `hm_*` function.
+- In **every other** file, include the header without the define. They only get
+  the declarations.
+
+```c
+#define HM_IMPLEMENTATION      // only in ONE .c file
+#include "hashmap.h"
+```
+
+Two mistakes to recognize:
+
+| Mistake | What you see |
+|---|---|
+| `HM_IMPLEMENTATION` defined in two files | "multiple definition" errors when linking |
+| `HM_IMPLEMENTATION` defined in no file | "undefined reference to `hm_create`" errors when linking |
+| the header included twice in the file that defines `HM_IMPLEMENTATION` (for example through another header) | "redefinition of `hash_djb2`" and similar errors when compiling |
+
+The third one is why the safest habit is a **dedicated implementation file**
+that contains nothing else:
+
+```c
+// hashmap_impl.c
+#define HM_IMPLEMENTATION
+#include "hashmap.h"
+```
 
 ### Quick example: counting words
 
+A program in one file, so it defines `HM_IMPLEMENTATION` itself:
+
 ```c
 #include <stdio.h>
+#define HM_IMPLEMENTATION
 #include "hashmap.h"
 
 int main(void)
@@ -103,7 +100,12 @@ int main(void)
         }
     }
 
-    printf("to: %d\n", *(int *)hm_get_str(counts, "to"));
+    HashmapIter it;
+    hm_iter_init(&it, counts);
+    while (hm_iter_next(&it)) {
+        printf("%.*s: %d\n", (int)hm_iter_key_len(&it),
+               (const char *)hm_iter_key(&it), *(int *)hm_iter_value(&it));
+    }
     printf("distinct words: %zu\n", hm_count(counts));
 
     hm_destroy(counts);
@@ -111,8 +113,17 @@ int main(void)
 }
 ```
 
-The three `_str` functions are wrappers for NUL-terminated string keys, and
-the terminator is not part of the key. For any other key type use
+Compile it with the header in the same folder (or add `-Ipath/to/src`):
+
+```
+gcc -std=c11 -Wall -Wextra -o wordcount wordcount.c
+```
+
+The map stores **bytes**. A key is a pointer and a length, and a value is
+always exactly `value_size` bytes, a size you choose once, when you create the
+map. Both are copied in, so the caller's variables can change or go out of
+scope afterwards. The three `_str` functions are wrappers for NUL-terminated
+string keys (the terminator is not part of the key). For any other key type use
 `hm_put`, `hm_get`, and `hm_delete` with an explicit length.
 
 ### Other key and value types
@@ -135,53 +146,97 @@ k.tag = 'a';
 k.id = 7;
 ```
 
-### Using the library in another project
+### Iterating
 
-There are three ways, from simplest to most "library-like". In every case the
-other project includes `"hashmap.h"` and needs `-I<path>/src` so the compiler
-finds it.
-
-**1. Copy the two files.** Copy `src/hashmap.h` and `src/hashmap.c` into the
-project and compile `hashmap.c` together with your own sources. Nothing to
-build or install, and it is the easiest option for pet projects:
-
-```
-gcc -Wall -Wextra -Ipath/to/hashmap/src main.c path/to/hashmap/src/hashmap.c -o app
-```
-
-**2. Static library.** Run `make static`, then pass the archive file to the
-compiler. It is linked into your program, so the program has no runtime
-dependency:
-
-```
-gcc -Wall -Wextra -Ipath/to/hashmap/src main.c path/to/hashmap/build/release/libskhashmap.a -o app
+```c
+HashmapIter it;
+hm_iter_init(&it, map);
+while (hm_iter_next(&it)) {
+    const void *key = hm_iter_key(&it);
+    size_t key_len = hm_iter_key_len(&it);
+    void *value = hm_iter_value(&it);
+    /* ... */
+}
 ```
 
-**3. Shared library.** Run `make shared`. The program loads
-`libskhashmap.so` when it starts, so the loader has to find it. Either bake
-the folder into the program with `-rpath`, or set `LD_LIBRARY_PATH` when
-running it:
+The iterator lives on the stack, so there is nothing to allocate or free. Every
+entry is visited exactly once, in an **unspecified order** (not insertion
+order, and it can change after the map grows).
+
+What you may do to the map inside the loop:
+
+| Action | Allowed? |
+|---|---|
+| read values, write through `hm_iter_value` | yes |
+| `hm_put` on a key that already exists | yes |
+| `hm_delete` of the entry just returned | yes |
+| `hm_put` of a **new** key (the map may grow and rearrange itself) | no |
+| `hm_delete` of any **other** entry | no |
+| `hm_destroy` and then keep using the iterator | no |
+
+After a "no" action, entries can be skipped, visited twice, or read from freed
+memory. Start a new iterator instead.
+
+### A project with several files
+
+Only one file gets the implementation. The others just include the header, even
+if one header includes it for them:
+
+```c
+// counter.h
+#include "hashmap.h"
+Hashmap *make_counter(void);
+
+// counter.c            (no HM_IMPLEMENTATION here)
+#include "counter.h"
+Hashmap *make_counter(void) { return hm_create(sizeof(int), 8, NULL); }
+
+// main.c               (no HM_IMPLEMENTATION here either)
+#include "counter.h"
+
+// hashmap_impl.c       (the only place with the define)
+#define HM_IMPLEMENTATION
+#include "hashmap.h"
+```
 
 ```
-gcc -Wall -Wextra -Ipath/to/hashmap/src main.c \
-    -Lpath/to/hashmap/build/release -lskhashmap \
-    -Wl,-rpath,/absolute/path/to/hashmap/build/release -o app
+gcc -std=c11 -Wall -Wextra -Ipath/to/src main.c counter.c hashmap_impl.c -o app
 ```
 
-One trap: with `-lskhashmap`, the linker picks the **shared** library when
-both `.a` and `.so` exist in the same folder. To force the static one, pass
-the `.a` path directly (option 2), or write
-`-Wl,-Bstatic -lskhashmap -Wl,-Bdynamic`, or only build the one you want. If
-a program built this way fails at start with "cannot open shared object file",
-that's the cause.
+### Optional: a static or shared library
 
-Optionally, copy `hashmap.h` and the library file into a shared folder such
-as `~/.local/include` and `~/.local/lib`, and then other projects only need
-`-I$HOME/.local/include -L$HOME/.local/lib -lskhashmap`.
+A single-header library doesn't need one, and copying `hashmap.h` is simpler.
+If you still want a library file, build it from the dedicated implementation
+file:
+
+```
+# static library
+gcc -std=c11 -Wall -Wextra -O2 -Ipath/to/src -c hashmap_impl.c -o hashmap_impl.o
+ar rcs libskhashmap.a hashmap_impl.o
+
+# shared library
+gcc -std=c11 -Wall -Wextra -O2 -fPIC -shared -Ipath/to/src hashmap_impl.c -o libskhashmap.so
+```
+
+Programs that use the library include `hashmap.h` **without** the define and
+link the library:
+
+```
+# static: pass the archive file
+gcc -std=c11 -Ipath/to/src main.c libskhashmap.a -o app
+
+# shared: the loader must find the .so at run time, so bake the folder in
+gcc -std=c11 -Ipath/to/src main.c -L. -lskhashmap -Wl,-rpath,/absolute/path/to/lib -o app
+```
+
+One trap: with `-lskhashmap`, the linker picks the **shared** library when both
+`.a` and `.so` are in the same folder. To force the static one, pass the `.a`
+path directly, or write `-Wl,-Bstatic -lskhashmap -Wl,-Bdynamic`. A program
+that fails at start with "cannot open shared object file" has hit this.
 
 ## API reference
 
-All declarations are in `src/hashmap.h`, with a comment on each function.
+All declarations are in `hashmap.h`, with a comment on each function.
 
 | Function | What it does |
 |---|---|
@@ -192,21 +247,33 @@ All declarations are in `src/hashmap.h`, with a comment on each function.
 | `hm_delete(hm, key, key_len)` | Remove the entry. Returns `true` if it existed. |
 | `hm_count(hm)` | Number of entries. 0 for a `NULL` map. |
 | `hm_put_str`, `hm_get_str`, `hm_delete_str` | The same three operations for NUL-terminated string keys. |
+| `hm_iter_init(it, hm)` | Start an iterator before the first entry. A `NULL` or empty map gives a walk that is finished from the start. |
+| `hm_iter_next(it)` | Move to the next entry. Returns `false` when there are no more (and keeps returning `false`). |
+| `hm_iter_key(it)`, `hm_iter_key_len(it)`, `hm_iter_value(it)` | The current entry's key bytes (read only, not NUL-terminated), their number, and a pointer to the value. They return `NULL` or 0 before the first `hm_iter_next` and after the end. |
 
 Rules that go with the API:
 
 - **Keys are equal** if they have the same length and the same bytes. `key`
   must be non-`NULL` even when `key_len` is 0 (the empty key `""` is allowed).
 - **Returned pointers** point at the map's own copy of the value. Writing
-  through one changes the stored value (`*p += 1` works). A pointer is valid
-  until the next `hm_put`, `hm_delete`, or `hm_destroy`, so copy the value out
-  if you need it longer.
+  through one changes the stored value (`*p += 1` works). A pointer from
+  `hm_put` or `hm_get` is valid until the next `hm_put`, `hm_delete`, or
+  `hm_destroy`, so copy the value out if you need it longer.
 - **Missing keys** are reported as `NULL`, so any value, including 0, is a
   legal value.
 - **A custom hash function** (type `HmHashFn`) must return the same value for
   equal keys and depend on nothing but the bytes it is given.
 
 ## How it works
+
+### Why one header
+
+The file has two parts. The first, inside an include guard, holds what every
+user needs: the struct definitions, the function declarations, and the small
+`static inline` string wrappers. The second part holds all the function bodies
+and sits behind `#ifdef HM_IMPLEMENTATION`, so it is compiled only in the one
+file that asks for it. That is the whole trick: the same file works as a
+header everywhere and as source in one place.
 
 ### Data structure
 
@@ -231,11 +298,14 @@ Node
   the head of a linked list (a *chain*) or `NULL` for an empty bucket.
 - A key goes to bucket `hash(key) % buckets_count`. Different keys can land in
   the same bucket, and that is the normal case, so every node stores its own
-  copy of the key, and a lookup compares keys with the hash only choosing
-  where to look.
+  copy of the key. The hash only chooses where to look, and a lookup then
+  compares keys.
 - Each entry is three separate allocations: the node, the key bytes, and the
   value bytes. Because the value has its own `malloc`, a pointer to it is
   suitably aligned for any type.
+- The struct definitions are in the header because a single header has nowhere
+  else to put them, but their fields are **private by convention**: use the
+  `hm_*` functions, never the fields.
 
 ### Operations
 
@@ -276,6 +346,25 @@ The default is djb2 over the key bytes (`hash = hash * 33 + byte`, starting at
 enough. A custom function can be passed to `hm_create`; the tests use one that
 returns 0 for every key to force every entry into a single chain.
 
+### Iterator
+
+An `HashmapIter` is a small struct on the caller's stack with four fields: the
+map, `current`, `following`, and `next_bucket`.
+
+- `current` is the entry last returned, and `NULL` before the first
+  `hm_iter_next` and after the end. The accessors read it, and return `NULL` or
+  0 when it is `NULL`.
+- `following` is the entry the **next** call will return. It is found one step
+  ahead: the next node in the same chain, or else the head of the next
+  non-empty bucket. That is why deleting `current` is safe, since the iterator
+  never needs to read the freed node.
+- `next_bucket` is where to continue searching when the current chain ends.
+- `hm_iter_next` hands out `following` as the new `current` and works out the
+  new `following`. Its return value means "this call produced an entry".
+- A new key can make the map grow and relink every node into new buckets, so
+  an iterator running across that would skip or repeat entries. That is why
+  adding keys during iteration is not allowed.
+
 ## Limitations
 
 **Design limits**
@@ -286,9 +375,12 @@ returns 0 for every key to force every entry into a single chain.
   if the value is a pointer to heap memory, the map never frees what it points
   to, not on delete, not on overwrite, and not on destroy. There is no
   per-value free callback. You must free those objects yourself.
-- **No iteration.** There is no way to walk all entries, or to list keys.
+- **Iteration has rules.** The order is unspecified, adding keys or deleting
+  other entries during a walk is not allowed (see [Iterating](#iterating)), and
+  a walk costs `buckets_count + count`.
 - **No shrinking.** The table only grows. Deleting entries does not reduce the
-  bucket count until the map is destroyed.
+  bucket count until the map is destroyed, and the iterator still scans every
+  bucket.
 - **Not thread-safe.** Don't use one map from several threads without your own
   locking.
 - **Returned pointers can go stale.** Only "valid until the next `hm_put`,
@@ -297,6 +389,23 @@ returns 0 for every key to force every entry into a single chain.
   another implementation (open addressing, for instance) could not keep it.
 - **Resize failures are silent.** If growing the table fails, the map carries
   on slower, with no way for the caller to know.
+
+**Single-header limits**
+
+- **The fields are visible.** The structs are in the header, so the compiler
+  can't stop your code from touching `count` or `buckets`. Doing so breaks the
+  map. Treat them as private.
+- **Public names can clash with yours.** The types `Node`, `Hashmap`, and
+  `HashmapIter` are declared in every file that includes the header, so a
+  project with its own `Node` type won't compile. The static helpers
+  (`hash_djb2`, `hm_get_bucket`, `hm_resize`) can clash with names in the one
+  file that defines `HM_IMPLEMENTATION`.
+- **The implementation part must not be included twice** in the file that
+  defines `HM_IMPLEMENTATION` (see [the one rule](#the-one-rule-where-the-implementation-goes)).
+  A dedicated implementation file avoids it.
+- **The implementation must be compiled as C, not C++** (it converts `void *`
+  implicitly). C++ code can use the declarations if the header is wrapped in
+  `extern "C"` and the implementation is compiled as C.
 
 **Keys**
 
@@ -325,10 +434,23 @@ returns 0 for every key to force every entry into a single chain.
 
 ## Tests
 
-`src/test.c` has its own `main()`. It is built into `build/test` by `make`,
-with the sanitizers on, and run with `./build/test`. Each test prints its name
-and `ok`, and a failing assertion prints the file and line, and the last test
-name shown is the one that failed.
+`src/test.c` has its own `main()` and defines `HM_IMPLEMENTATION` itself, so it
+needs nothing besides the header. Build it with the sanitizers and run it:
+
+```
+mkdir -p build
+gcc -std=c11 -Wall -Wextra -ggdb -fsanitize=address,undefined -o build/test src/test.c
+./build/test
+```
+
+AddressSanitizer finds out-of-bounds access and use-after-free, and also
+reports leaks when the program exits, so keep it on. For timing, build a
+separate binary with `-O2` and no sanitizers.
+
+Each test prints its name and `ok`. A failing assertion prints the file and
+line, and the last test name shown is the one that failed. `test.c` refuses to
+compile with `-DNDEBUG`, because that removes every `assert` and the tests would
+pass without checking anything.
 
 What it covers:
 
@@ -353,11 +475,8 @@ with the default hash and with the constant hash. Starting from tiny tables
 makes the map resize many times in the middle of a run.
 
 Not covered: `malloc` failing (so the failure paths in `hm_put` can only be
-checked by reading the code), and the default hash function directly, since it
-is `static`.
-
-`test.c` refuses to compile with `-DNDEBUG`, because that removes every
-`assert` and the tests would pass without checking anything.
+checked by reading the code), and the iterator, which still needs its tests in
+`test.c` (see the next steps).
 
 ## Development notes
 
@@ -378,10 +497,34 @@ Mistakes that cost time, kept as a reminder:
   struct before filling it.
 - **A "1-bucket" map doesn't stay at 1 bucket**, because it grows on the
   second insert. Chain tests use a constant hash function instead.
+- **A leak in the test program itself:** `return 0;` before `hm_destroy(map);`
+  made the destroy unreachable, and LeakSanitizer reported the whole map. GCC
+  gave no warning.
+- **First iterator version skipped entries.** `hm_iter_next` returned `false`
+  when it moved onto the last entry, because the result answered "is there
+  something after this?" instead of "did this call produce an entry?". With a
+  `while (hm_iter_next(&it))` loop, the first and the last entry were never
+  visited.
+- **`iter = NULL;` inside an init function does nothing for the caller.** It
+  only changes the local parameter, so the caller's struct stayed
+  uninitialized. Initialize the fields into the finished state instead.
+- **Iterator accessors dereferenced a `NULL` current entry.** Calling them
+  before the first `hm_iter_next` or after the end crashed. They now return
+  `NULL` or 0.
+- **Single-header trap:** the implementation part is outside the include guard,
+  so including the header twice in the file that defines `HM_IMPLEMENTATION`
+  gives redefinition errors. Keep a dedicated implementation file, or guard
+  the implementation with a second macro.
 
 ## Possible next steps
 
-- an iterator, so all entries can be visited
+- iterator tests in `test.c`: every entry exactly once (several sizes, bucket
+  counts, and both hashes), a `NULL` and an empty map, calling `hm_iter_next`
+  again after the end, deleting the current entry in the loop, and the
+  accessors before the first `hm_iter_next` and after the end
+- rename the public type `Node` (for example `HmNode`) and prefix the static
+  helpers, so they can't clash with names in the user's code
+- guard the implementation part against being included twice
 - a benchmark (inserts, hits, misses, deletes, different load factors, good and
   bad hash), with the results saved in this README
 - an optional free callback for values that own memory
