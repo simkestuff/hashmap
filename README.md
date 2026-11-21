@@ -280,21 +280,21 @@ header everywhere and as source in one place.
 ```
 Hashmap
   buckets ──► [0] ──► NULL
-              [1] ──► Node ──► Node ──► NULL
-              [2] ──► Node ──► NULL
+              [1] ──► HashmapNode ──► HashmapNode ──► NULL
+              [2] ──► HashmapNode ──► NULL
               [3] ──► NULL
   buckets_count   number of slots in the array above
   count           number of entries stored
   value_size      bytes per value, fixed at creation
   hash            hash function (default: djb2)
 
-Node
+HashmapNode
   key, key_len    heap copy of the key bytes, and their number
   value           heap copy of the value bytes
   next            next node in the same bucket, NULL at the end
 ```
 
-- `buckets` is a `Node **`: an array of `buckets_count` pointers. Each one is
+- `buckets` is a `HashmapNode **`: an array of `buckets_count` pointers. Each one is
   the head of a linked list (a *chain*) or `NULL` for an empty bucket.
 - A key goes to bucket `hash(key) % buckets_count`. Different keys can land in
   the same bucket, and that is the normal case, so every node stores its own
@@ -395,9 +395,9 @@ map, `current`, `following`, and `next_bucket`.
 - **The fields are visible.** The structs are in the header, so the compiler
   can't stop your code from touching `count` or `buckets`. Doing so breaks the
   map. Treat them as private.
-- **Public names can clash with yours.** The types `Node`, `Hashmap`, and
+- **Public names can clash with yours.** The types `HashmapNode`, `Hashmap`, and
   `HashmapIter` are declared in every file that includes the header, so a
-  project with its own `Node` type won't compile. The static helpers
+  project with its own `HashmapNode` type won't compile. The static helpers
   (`hash_djb2`, `hm_get_bucket`, `hm_resize`) can clash with names in the one
   file that defines `HM_IMPLEMENTATION`.
 - **The implementation part must not be included twice** in the file that
@@ -522,8 +522,7 @@ Mistakes that cost time, kept as a reminder:
   counts, and both hashes), a `NULL` and an empty map, calling `hm_iter_next`
   again after the end, deleting the current entry in the loop, and the
   accessors before the first `hm_iter_next` and after the end
-- rename the public type `Node` (for example `HmNode`) and prefix the static
-  helpers, so they can't clash with names in the user's code
+- Prefix the static helpers, so they can't clash with names in the user's code
 - guard the implementation part against being included twice
 - a benchmark (inserts, hits, misses, deletes, different load factors, good and
   bad hash), with the results saved in this README

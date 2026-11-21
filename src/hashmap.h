@@ -86,12 +86,12 @@
 // implementation below (and the iterator) need them, and because a single
 // header has nowhere else to put them. Treat all their fields as PRIVATE:
 // don't read or write them from your own code. Use the hm_* functions.
-typedef struct Node {
+typedef struct HashmapNode {
     void *value;         // heap copy of the value, exactly value_size bytes
     void *key;           // heap copy of the key bytes (not NUL-terminated)
     size_t key_len;      // number of bytes in `key`
-    struct Node *next;   // next entry in the same bucket, NULL at the end
-} Node;
+    struct HashmapNode *next;   // next entry in the same bucket, NULL at the end
+} HashmapNode;
 
 // Hash function over the raw bytes of a key. Must return the same value for
 // equal keys (same length, same bytes) and depend on nothing else.
@@ -102,7 +102,7 @@ typedef size_t (*HmHashFn)(const void *key, size_t key_len);
 //   buckets[i] is the first node of bucket i's chain, or NULL if bucket i is
 //   empty. The array is allocated with calloc, so new buckets start as NULL.
 typedef struct Hashmap {
-    Node **buckets;        // array of buckets_count chain heads
+    HashmapNode **buckets;        // array of buckets_count chain heads
     size_t value_size;     // bytes per value, fixed at creation (> 0)
     size_t buckets_count;  // index = hash(key) % buckets_count
     HmHashFn hash;         // hash function in use (never NULL after creation)
@@ -280,7 +280,7 @@ static size_t hm_get_bucket(size_t hash_of_key, size_t bucket_count)
 // Helper: double the bucket array and move every node into it.
 //
 // Every node's new bucket is computed again from its key, because the index
-// depends on buckets_count. Nodes are RELINKED, not copied: no key or value is
+// depends on buckets_count. HashmapNodes are RELINKED, not copied: no key or value is
 // allocated or freed, so pointers to stored values stay where they are. (That
 // is a property of this implementation, not a promise of the API.)
 //
@@ -292,13 +292,13 @@ static bool hm_resize(Hashmap *hm)
     if (hm->buckets_count > SIZE_MAX / 2) return false;
     size_t new_buckets_count = hm->buckets_count * 2;
 
-    Node **new_buckets = calloc(new_buckets_count, sizeof(Node *));
+    HashmapNode **new_buckets = calloc(new_buckets_count, sizeof(HashmapNode *));
     if (new_buckets == NULL) return false;
 
     for (size_t bi = 0; bi < hm->buckets_count; bi++) {
-	Node *nodep = hm->buckets[bi];
+	HashmapNode *nodep = hm->buckets[bi];
 	while (nodep != NULL) {
-	    Node *next = nodep->next;
+	    HashmapNode *next = nodep->next;
 	    size_t new_bucket = hm_get_bucket((hm->hash)(nodep->key, nodep->key_len), new_buckets_count);
 	    nodep->next = new_buckets[new_bucket];
 	    new_buckets[new_bucket] = nodep;
@@ -329,7 +329,7 @@ Hashmap *hm_create(size_t value_size, size_t buckets_count, HmHashFn hash)
     if (hash == NULL) hmp->hash = &hash_djb2;
     else hmp->hash = hash;
     
-    hmp->buckets = calloc(hmp->buckets_count, sizeof(Node *));
+    hmp->buckets = calloc(hmp->buckets_count, sizeof(HashmapNode *));
     if (hmp->buckets == NULL) {
 	free(hmp);
 	return NULL;
@@ -346,11 +346,11 @@ void hm_destroy(Hashmap *hm)
 {
     if (hm != NULL) {
 	for (size_t i = 0; i < hm->buckets_count; i++) {
-	    Node *p = hm->buckets[i];
+	    HashmapNode *p = hm->buckets[i];
 	    while (p != NULL) {
 		free(p->key);
 		free(p->value);
-		Node *tmp = p;
+		HashmapNode *tmp = p;
 		p = p->next;
 		free(tmp);
 	    }
@@ -377,7 +377,7 @@ void *hm_get(const Hashmap *hm, const void *key, size_t key_len)
     if (hm == NULL) return NULL;
     
     size_t bucket = hm_get_bucket(hm->hash(key, key_len), hm->buckets_count);
-    Node *p = hm->buckets[bucket];
+    HashmapNode *p = hm->buckets[bucket];
     while (p != NULL) {
 	if (p->key_len == key_len && memcmp(p->key, key, key_len) == 0) return p->value;
 	p = p->next;
@@ -414,8 +414,8 @@ void *hm_put(Hashmap *hm, const void *key, size_t key_len, const void *value)
     // All three allocations are made first. If one fails, exactly the ones that
     // already succeeded are freed and the map is left unchanged. The data is
     // copied and the node linked in only after every allocation has succeeded.
-    // Node allocation
-    Node *n = malloc(sizeof(Node));
+    // HashmapHashmapNode allocation
+    HashmapNode *n = malloc(sizeof(HashmapNode));
     if (n == NULL) return NULL;
     
     // key allocation and copying
@@ -441,7 +441,7 @@ void *hm_put(Hashmap *hm, const void *key, size_t key_len, const void *value)
     n->value = v;
     
     size_t bucket = hm_get_bucket(hm->hash(key, key_len), hm->buckets_count);
-    Node *p = hm->buckets[bucket];
+    HashmapNode *p = hm->buckets[bucket];
     
     // Link the new node at the FRONT of the chain: no walking needed, and the
     // bucket head is simply replaced.
@@ -462,8 +462,8 @@ bool hm_delete(Hashmap *hm, const void *key, size_t key_len)
     if (hm == NULL) return false;
 	
     size_t bucket = hm_get_bucket(hm->hash(key, key_len), hm->buckets_count);
-    Node *p = hm->buckets[bucket];
-    Node *prev = NULL;
+    HashmapNode *p = hm->buckets[bucket];
+    HashmapNode *prev = NULL;
     while (p != NULL) {
 	if (p->key_len == key_len && memcmp(p->key, key, key_len) == 0) {
 	    if (prev == NULL) hm->buckets[bucket] = p->next;
@@ -534,7 +534,7 @@ bool hm_iter_next(HashmapIter *iter)
     iter->current = iter->following;
     if (iter->current == NULL) return false;
 
-    Node *np = ((Node *)iter->current)->next;
+    HashmapNode *np = ((HashmapNode *)iter->current)->next;
     if (np != NULL) {
 	iter->following = np;
 	return true;
@@ -560,19 +560,19 @@ bool hm_iter_next(HashmapIter *iter)
 const void *hm_iter_key(const HashmapIter *it)
 {
     if (it == NULL || it->current == NULL) return NULL;
-    return ((Node *)it->current)->key;
+    return ((HashmapNode *)it->current)->key;
 }
 
 size_t hm_iter_key_len(const HashmapIter *it)
 {
     if (it == NULL || it->current == NULL) return 0;
-    return ((Node *)it->current)->key_len;
+    return ((HashmapNode *)it->current)->key_len;
 }
 
 void  *hm_iter_value(const HashmapIter *it)
 {
     if (it == NULL || it->current == NULL) return NULL;
-    return ((Node *)it->current)->value;
+    return ((HashmapNode *)it->current)->value;
 }
 
 #endif // HM_IMPLEMENTATION_DONE
